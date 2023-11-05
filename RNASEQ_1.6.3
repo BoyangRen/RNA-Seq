@@ -1,0 +1,278 @@
+#! /bin/bash 
+
+V="RNA-Seq Pipe V1.6.1"; Author="RBY"; SignDate="July 12 2018";
+echo "";
+echo "Welcome! The version of this pipeline is: $V.";
+echo -e "$Author, $SignDate \n";
+
+#================================START OF RESOURCE AVAILIBILITYCHECK===========================
+#START OF RESOURCE AVAILIBILITY CHECK
+#ENSEMBL GENOME version:
+ENSEMBL_RELEASE=84
+
+echo -e "The currently used ENSEMBL release version is: $ENSEMBL_RELEASE. \n"
+echo -e "Checking...\n"
+FILE1="*.ht2" 
+COUNT1=$(ls $FILE1|wc -l)
+if [ $COUNT1 != 0 ] 
+then echo "1. index.ht2(s) : OK." 
+else echo "1. index.ht2 : NOT exist!! Download genome at https://ccb.jhu.edu/software/hisat2/index.shtml or make it locally by run make_genome.sh" 
+     echo -e "Would you like to download it now? (~700MB to be download and it takes ~3min) \n"
+    
+     read -t 60 -p "Press <enter> to download or <Ctrl+C> to quit."
+
+# Downloads sequence for the GRCm38 release 81 version of M. Musculus (mouse) from
+# Ensembl.
+#
+# By default, this script builds and index for just the base files,
+# since alignments to those sequences are the most useful.  To change
+# which categories are built by this script, edit the CHRS_TO_INDEX
+# variable below.
+#
+
+
+ENSEMBL_GRCm38_BASE=ftp://ftp.ensembl.org/pub/release-${ENSEMBL_RELEASE}/fasta/mus_musculus/dna
+
+get() {
+	file=$1
+	if ! wget --version >/dev/null 2>/dev/null ; then
+		if ! curl --version >/dev/null 2>/dev/null ; then
+			echo "Please install wget or curl somewhere in your PATH"
+			exit 1
+		fi
+		curl -o `basename $1` $1
+		return $?
+	else
+		wget $1
+		return $?
+	fi
+}
+
+HISAT2_BUILD_EXE=./hisat2-build
+if [ ! -x "$HISAT2_BUILD_EXE" ] ; then
+	if ! which hisat2-build ; then
+		echo "Could not find hisat2-build in current directory or in PATH"
+		exit 1
+	else
+		HISAT2_BUILD_EXE=`which hisat2-build`
+	fi
+fi
+
+rm -f genome.fa
+F=Mus_musculus.GRCm38.dna.primary_assembly.fa
+if [ ! -f $F ] ; then
+	get ${ENSEMBL_GRCm38_BASE}/$F.gz || (echo "Error getting $F" && exit 1)
+	gunzip $F.gz || (echo "Error unzipping $F" && exit 1)
+	mv $F genome.fa
+fi
+
+CMD="${HISAT2_BUILD_EXE} genome.fa genome"
+echo Running $CMD
+if $CMD ; then
+	echo "genome index built; you may remove fasta files"
+else
+	echo "Index building failed; see error message"
+fi
+
+
+
+fi
+#=================================================
+
+FILE2="*.gtf" 
+COUNT2=$(ls $FILE2|wc -l)
+if [ $COUNT2 != 0 ] 
+then echo "2. chromosome_annotation.gtf : OK." 
+else echo "2. chromosome_annotation.gtf : NOT exist!! Download annotation file at ftp://ftp.ensembl.org/pub/" 
+    echo "Would you like to download it now? (~30MB to be download and it takes ~2min)"
+    echo ""
+    read -t 60 -p "Press <enter> to download or <Ctrl+C> to quit."
+    wget "ftp://ftp.ensembl.org/pub/release-$ENSEMBL_RELEASE/gtf/mus_musculus/Mus_musculus.GRCm38.$ENSEMBL_RELEASE.chr.gtf.gz"
+    gzip -d Mus_musculus.GRCm38.$ENSEMBL_RELEASE.chr.gtf.gz
+    echo "DONE!"
+    echo ""
+    
+fi
+
+#===============================================
+
+FILE3="*.py" 
+COUNT3=$(ls $FILE3|wc -l)
+if [ $COUNT3 != 0 ] 
+then echo "3. prepDE.py : OK." 
+else echo "3. prepDE.py : NOT exist!! Download the python script for read count extraction at https://ccb.jhu.edu/software/stringtie/dl/prepDE.py" 
+    echo "Would you like to download it now? ( <1MB to be download and it takes <1min)"
+    echo ""
+    read -t 60 -p "Press <enter> to download or <Ctrl+C> to quit."
+    wget "https://ccb.jhu.edu/software/stringtie/dl/prepDE.py"
+
+fi
+
+#package checking and installing
+for COMMAND in python3.6 hisat2 samtools stringtie gcc
+do
+	if ! which $COMMAND > /dev/null; then
+	   #echo -e "$COMMAND not found! Install? (y/n) \c"
+	   #read REPLY
+	   		  #echo $REPLY
+			  #if [ "$REPLY" == "y" ]; then 
+			  sudo apt install $COMMAND 2> RNA_SEQ_running_log.txt
+			  
+			  #fi
+	fi
+done
+
+
+
+#================================END OF RESOURCE AVAILIBILITYCHECK===========================
+COUNT=$(ls *.fq.gz |wc -l)
+let "c=$COUNT/2*1"
+let "ETC=$COUNT*15/2+10"
+COUNT_SUM_THRESHOLD=$c
+
+echo -e "\nCurrent threshold for count table (sum across samples for a gene) is: $COUNT_SUM_THRESHOLD";
+read  -e -t 600 -p "Enter the threshold for output of count table and press <ENTER>:" -i "$COUNT_SUM_THRESHOLD" COUNT_SUM_THRESHOLD
+echo -e "The new threshold for count table (sum across sample for a gene) is: $COUNT_SUM_THRESHOLD \n"
+
+echo "    =========================================================================="
+echo "        ATTENTION: The pair-end fasta sequence should be named after:"
+echo "        '*_1.*fq.gz' and '*_2.*fq.gz', where * represents any character(s)."
+echo "    =========================================================================="
+
+echo -e "\nAre the names of fasta files fit to this rule? \n"
+read -t 60 -p  "Press <enter> to confirm or <Ctrl+C> to quit "
+echo -e "\n    =========================================================================="
+echo -e "              All set! The estimated time to complete is $ETC minutes."
+echo -e "              Note: This time may vary greatly on differnt platform."
+echo -e "    =========================================================================="
+echo ""
+read -e -p "Press <enter> to start or <Ctrl+C> to quit"
+echo "Starting...";
+
+if [ ! -d $(pwd)/Temp ]
+then
+  mkdir -p $(pwd)/Temp
+fi
+
+if [ ! -d $(pwd)/Output ]
+then
+  mkdir -p $(pwd)/Output
+fi
+
+ls |grep _1.*fq.gz |sed -e s#^#Assemble/# -e s#_[12].*fq.gz#.gtf# >Temp/mergelist.temp;
+GENOME=$(ls|grep *.fa);
+GENOME=${GENOME%.fa};
+INDEX="genome";
+ANNO=$(ls|grep *GRCm38*gtf);
+READCOUNTS=$(ls|grep *.py);
+echo "$GENOME (.fa) is the genome sequence file;";
+echo "$ANNO is the reference annotation transcripts;";
+#wget "https://ccb.jhu.edu/software/stringtie/dl/prepDE.py";
+echo "$READCOUNTS is the python script for readcount extraction.";
+date;
+
+n=0;
+for FILE1 in *_1.*fq.gz
+do 
+  ((n++))
+  CORE=$(echo $FILE1| sed s#_1.*fq.gz##);
+  FILE2=$(echo $FILE1|sed s#_1.#_2.#);
+  echo  "";
+  echo "Sample $n:  $CORE";
+  echo "Processing $FILE1";
+  echo "The pair-end counterpart is: $FILE2";
+  
+  hisat2 -p 8 --dta -x $INDEX -1 $FILE1 -2 $FILE2 | samtools view -@ 8 -uS |samtools sort -@ 8 -O BAM -o Temp/$CORE.sorted.bam;
+  #samtools view -@ 8 -uS Temp/$CORE.sam | samtools sort -@ 8 -O BAM -o Temp/$CORE.sorted.bam;
+  stringtie Temp/$CORE.sorted.bam -e -v -p 8 -G $ANNO -o Assemble/$CORE.gtf;
+#13 minutes per sample pair.
+done
+
+#GTF merge
+  stringtie --merge Temp/mergelist.temp -G $ANNO -v -o Assemble/mergedGTF.gtf
+
+#Prepare samplelist and pData list for post processing.
+echo "ids,groups">Temp/pData.temp
+
+for BAM in Temp/*.sorted.bam
+do  
+  BAMCORE=$(echo $BAM|sed -e 's#.sorted.bam##g' -e 's#Temp/##g');
+
+  stringtie $BAM -eBv -p 8 -G Assemble/mergedGTF.gtf -o Assemble/$BAMCORE/$BAMCORE.merged.gtf
+ 
+  echo -e "\nCurrent re-assembling: $BAM"
+  echo BAMCORE is $BAMCORE
+  echo -e "$BAMCORE\tAssemble/$BAMCORE/$BAMCORE.merged.gtf">>Temp/samplelist.temp;
+  echo "$BAMCORE,">>Temp/pData.temp;
+done
+
+#Important: convert "-" in sample name to "." for downstream import to R which 
+cat Temp/pData.temp |sed -e 's#-#.#g' > Output/pData.csv
+
+#===================================post-processing===============================
+python prepDE.py -i Temp/samplelist.temp -g Temp/gene_count_matrix.csv -t Temp/transcript_count_matrix.csv;
+echo "gene_count_matrix.csv and transcript_count_matrix.csv is created."
+#the output files of prepDE.py are gene_count_matrix.csv and transcript_count_matrix.csv
+
+
+
+# Fetch a comma delimited genelist with gene_id,transcript_id (unique) and official gene symbol(ref_gene_name) 
+
+awk -F'\t' '$3=="transcript"{print $9;}' Assemble/mergedGTF.gtf |awk -F' ' '{print $2,$8,$6}' |sed -e 's#"##g' -e 's#; #,#g' -e 's#;##g' >Temp/genelist.temp
+#Temp/genelist.temp:geneID, ENSGene, genesymbol(should be matched with gene_count_matrix$1)
+awk '!a[$0]++' Temp/genelist.temp > Temp/genelist_nonredundant.temp
+#remove redundants
+echo "Temp/genelist_nonredundant.temp from mergedGTF has been created."
+
+
+
+# Filter out gene_count_matrix.csv records with low counts: 
+awk -F',' -v var="$COUNT_SUM_THRESHOLD" '{sum=0; for(i=2;i<=NF;i++){sum+=$i;};if(FNR==1||sum>=var) print $0;}' Temp/gene_count_matrix.csv > Temp/gene_count_matrix_Thr-$COUNT_SUM_THRESHOLD.temp 
+
+# Match genelist with gene_count_matrix.csv
+      
+GENEMATRIX=($(awk -F',' '{print;}' Temp/gene_count_matrix_Thr-$COUNT_SUM_THRESHOLD.temp ))
+GENEMATRIX_COUNT=($(cat Temp/gene_count_matrix_Thr-$COUNT_SUM_THRESHOLD.temp |cut -d"," -f2-))
+QUERY_LIST=($(awk -F',' '{print $1;}' Temp/gene_count_matrix_Thr-$COUNT_SUM_THRESHOLD.temp ))
+colSUM=$(wc -l < Temp/gene_count_matrix_Thr-$COUNT_SUM_THRESHOLD.temp)
+let "colSUM=($colSUM)-1"
+
+#Generate header for output csv:
+echo "GeneID,EnsemblID,GeneSymbol,${GENEMATRIX_COUNT[0]}" > Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp.temp
+#Important: convert "-" in sample name to "." for downstream import to R which 
+cat Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp.temp |sed -e 's#-#.#g' > Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp
+
+
+for (( i=1;i<=$colSUM;i++ )) 
+do
+  QUERY=${QUERY_LIST[i]}
+  #This line should be improved from fetching data from file to fetching data from array.
+  FULLID=$(awk -F, -v var="$QUERY" '$1~var{print;exit;}' Temp/genelist_nonredundant.temp)
+  echo $FULLID,${GENEMATRIX_COUNT[i]} >> Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp
+  let "P=$i*100/($colSUM)"
+  echo $i "of" $colSUM  "|"  $P"%"
+done
+
+if [ ! -d $(pwd)/Output ]
+then
+  mkdir -p $(pwd)/Output
+fi
+
+
+#Convert ENSEMBLID+GENESYMBOL+COUNTMATRIX to csv file.
+cut -d "," -f2- Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp > Output/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.csv
+#Output full path of pwd/Output for downstream convenience of R analysis.
+echo $(pwd)"/Output" >Output/path4R.txt
+
+#Remove temp files.
+rm Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp.temp Temp/gene_count_matrix_Anno-$COUNT_SUM_THRESHOLD.temp Temp/gene_count_matrix_Thr-$COUNT_SUM_THRESHOLD.temp Temp/pData.temp
+
+echo "DONE!"
+date
+echo -e "The annotated raw gene count table is available in:" $(pwd)"/Output\n"
+
+echo "Please add grouping info in pData.csv (manually) in the current directory."
+read -p "Press <enter> to continue when you have done that or <Ctrl+C> to quit the pipeline."
+
+
+
